@@ -109,120 +109,26 @@ export async function fetchWalletTransactions(walletAddress, days = 30, onProgre
 }
 
 /**
- * Fetches account info for multiple addresses using Helius API
+ * Fetches account info for multiple addresses
+ * Note: Helius batch account info endpoint not available, using local filtering only
  * @param {string[]} addresses - Array of addresses to check
  * @param {Function} onProgress - Callback for progress updates
  * @returns {Promise<Map>} - Map of address -> account info
  */
 export async function fetchAccountsInfo(addresses, onProgress = null) {
-  if (!HELIUS_API_KEY) {
-    throw new HeliusApiError('Helius API key is not configured.');
-  }
-
   if (!addresses || addresses.length === 0) {
     return new Map();
   }
 
-  // Filter out addresses we already have cached
-  const uncachedAddresses = addresses.filter(addr => !accountInfoCache.has(addr));
-  
-  if (uncachedAddresses.length === 0) {
-    // All addresses are cached, return from cache
-    const result = new Map();
-    addresses.forEach(addr => {
-      result.set(addr, accountInfoCache.get(addr));
-    });
-    return result;
-  }
-
-  if (onProgress) onProgress(`Analyzing ${uncachedAddresses.length} wallets...`);
-
-  // Batch addresses in chunks of 100 (API limit)
-  const BATCH_SIZE = 100;
-  const batches = [];
-  for (let i = 0; i < uncachedAddresses.length; i += BATCH_SIZE) {
-    batches.push(uncachedAddresses.slice(i, i + BATCH_SIZE));
-  }
-
-  try {
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      
-      if (onProgress && batches.length > 1) {
-        onProgress(`Analyzing wallets... (${i + 1}/${batches.length})`);
-      }
-
-      // Build URL with addresses as query params
-      const url = new URL(`${HELIUS_BASE_URL}/addresses`);
-      url.searchParams.append('api-key', HELIUS_API_KEY);
-      batch.forEach(addr => url.searchParams.append('addresses', addr));
-
-      const response = await fetch(url.toString());
-
-      if (!response.ok) {
-        // If this endpoint fails, fall back to basic filtering
-        console.warn('Account info API failed, using basic filtering');
-        batch.forEach(addr => {
-          accountInfoCache.set(addr, { accountType: 'unknown', isValid: true });
-        });
-        continue;
-      }
-
-      const accountsData = await response.json();
-
-      // Process results and cache them
-      if (Array.isArray(accountsData)) {
-        accountsData.forEach((account, index) => {
-          const addr = batch[index];
-          const accountType = account?.accountType || 'unknown';
-          const isProgram = ['program', 'programData', 'programExecutable'].includes(accountType);
-          const isToken = ['token', 'tokenAccount', 'mint'].includes(accountType);
-          
-          accountInfoCache.set(addr, {
-            accountType,
-            isProgram,
-            isToken,
-            isValid: !isProgram && !isToken,
-            raw: account,
-          });
-        });
-      } else if (typeof accountsData === 'object') {
-        // Handle object response format
-        Object.entries(accountsData).forEach(([addr, account]) => {
-          const accountType = account?.accountType || 'unknown';
-          const isProgram = ['program', 'programData', 'programExecutable'].includes(accountType);
-          const isToken = ['token', 'tokenAccount', 'mint'].includes(accountType);
-          
-          accountInfoCache.set(addr, {
-            accountType,
-            isProgram,
-            isToken,
-            isValid: !isProgram && !isToken,
-            raw: account,
-          });
-        });
-      }
-
-      // Small delay between batches to avoid rate limiting
-      if (i < batches.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-  } catch (error) {
-    console.warn('Error fetching account info:', error);
-    // On error, mark uncached addresses as unknown but valid
-    uncachedAddresses.forEach(addr => {
-      if (!accountInfoCache.has(addr)) {
-        accountInfoCache.set(addr, { accountType: 'unknown', isValid: true });
-      }
-    });
-  }
-
-  // Return results for requested addresses
+  // Use local filtering only (blocklist + pattern matching)
+  // The isLikelyUserWallet check in parseTransaction already handles this
   const result = new Map();
   addresses.forEach(addr => {
-    result.set(addr, accountInfoCache.get(addr) || { accountType: 'unknown', isValid: true });
+    // Mark all as valid - filtering is done via blocklist in parseTransaction
+    result.set(addr, { accountType: 'unknown', isValid: true });
+    accountInfoCache.set(addr, { accountType: 'unknown', isValid: true });
   });
+  
   return result;
 }
 
@@ -280,7 +186,13 @@ function buildApiUrl(walletAddress, beforeSignature = null) {
  */
 function parseTransaction(tx, walletAddress) {
   const walletAddressLower = walletAddress.toLowerCase();
-  
+
+  // FILTER: Only include direct transfers, not swaps or other transaction types
+  const ALLOWED_TX_TYPES = ['TRANSFER', 'SOL_TRANSFER', 'NATIVE_TRANSFER'];
+  if (!ALLOWED_TX_TYPES.includes(tx.type)) {
+    return null;
+  }
+
   // Extract basic transaction info
   const parsed = {
     signature: tx.signature,
