@@ -1,16 +1,31 @@
+import { getCexInfo } from './walletFilters';
+
+// Price constants for value filtering
+const SOL_PRICE_USD = 200; // Approximate SOL price in USD
+const MIN_VALUE_USD = 2; // Minimum transaction value in USD
+const MIN_SOL_VALUE = MIN_VALUE_USD / SOL_PRICE_USD; // = 0.01 SOL
+
 /**
  * Processes raw transaction data and structures it for tree visualization
+ * Filters applied:
+ * 1. Minimum $2 USD value per transaction
+ * 2. Known program blocklist (via accountsInfo)
+ * 3. ATA/Token accounts (via accountsInfo)
+ * 
  * @param {Array} transactions - Array of parsed transactions from heliusApi
  * @param {string} rootWalletAddress - The wallet address being tracked
+ * @param {Map} accountsInfo - Map of address -> account info from Helius API
  * @returns {Object} - Tree-structured data for visualization
  */
-export function processTransactions(transactions, rootWalletAddress) {
+export function processTransactions(transactions, rootWalletAddress, accountsInfo = new Map()) {
   if (!transactions || transactions.length === 0) {
     return createEmptyTreeData(rootWalletAddress);
   }
 
   // Group transactions by counterparty
   const counterpartyMap = new Map();
+  let filteredByValue = 0;
+  let filteredByAccountType = 0;
 
   for (const tx of transactions) {
     // Process all transfers in the transaction
@@ -19,8 +34,25 @@ export function processTransactions(transactions, rootWalletAddress) {
 
       if (!counterparty) continue;
 
+      // FILTER 1: Minimum value filter ($2 USD = 0.01 SOL)
+      if (amount < MIN_SOL_VALUE) {
+        filteredByValue++;
+        continue;
+      }
+
+      // FILTER 2: Check account type from Helius API
+      // Filters out: programs, programData, token accounts, ATAs
+      const accountInfo = accountsInfo.get(counterparty);
+      if (accountInfo && !accountInfo.isValid) {
+        filteredByAccountType++;
+        console.log(`Filtered: ${counterparty.slice(0, 8)}... (${accountInfo.accountType})`);
+        continue;
+      }
+
       // Initialize counterparty entry if not exists
       if (!counterpartyMap.has(counterparty)) {
+        const cexInfo = getCexInfo(counterparty);
+        
         counterpartyMap.set(counterparty, {
           address: counterparty,
           totalSent: 0,
@@ -32,6 +64,12 @@ export function processTransactions(transactions, rootWalletAddress) {
           tokensInvolved: new Set(),
           firstInteraction: tx.timestamp,
           lastInteraction: tx.timestamp,
+          // CEX wallet info
+          isCex: !!cexInfo,
+          cexName: cexInfo?.name || null,
+          cexLabel: cexInfo?.label || null,
+          // Account type from Helius
+          accountType: accountInfo?.accountType || 'unknown',
         });
       }
 
@@ -71,8 +109,24 @@ export function processTransactions(transactions, rootWalletAddress) {
     }
   }
 
-  // Convert to tree structure
-  return buildTreeData(rootWalletAddress, counterpartyMap);
+  // Log summary
+  const totalFiltered = filteredByValue + filteredByAccountType;
+  console.log(`\n📊 Filtering Summary:`);
+  console.log(`   Filtered by value (<$${MIN_VALUE_USD}): ${filteredByValue} transfers`);
+  console.log(`   Filtered by account type: ${filteredByAccountType} addresses`);
+  console.log(`   Showing: ${counterpartyMap.size} wallets\n`);
+
+  // Convert to tree structure with filter stats
+  const treeData = buildTreeData(rootWalletAddress, counterpartyMap);
+  
+  // Add filter stats
+  treeData.stats.filteredByValue = filteredByValue;
+  treeData.stats.filteredByAccountType = filteredByAccountType;
+  treeData.stats.totalFiltered = totalFiltered;
+  treeData.stats.minValueUsd = MIN_VALUE_USD;
+  treeData.stats.solPriceUsd = SOL_PRICE_USD;
+
+  return treeData;
 }
 
 /**
@@ -100,7 +154,11 @@ function createEmptyTreeData(rootWalletAddress) {
       totalTransactions: 0,
       totalSent: 0,
       totalReceived: 0,
-      tokensInvolved: [],
+      tokensInvolved: ['SOL'],
+      cexCount: 0,
+      filteredByValue: 0,
+      filteredByAccountType: 0,
+      totalFiltered: 0,
     },
   };
 }
@@ -117,6 +175,7 @@ function buildTreeData(rootWalletAddress, counterpartyMap) {
   let totalSent = 0;
   let totalReceived = 0;
   let totalTransactions = 0;
+  let cexCount = 0;
   const allTokens = new Set();
 
   // Create root node
@@ -137,12 +196,19 @@ function buildTreeData(rootWalletAddress, counterpartyMap) {
     const tokensSentArray = mapToTokenArray(data.tokensSent);
     const tokensReceivedArray = mapToTokenArray(data.tokensReceived);
 
+    // Count CEX wallets
+    if (data.isCex) cexCount++;
+
     // Create child node
     const childNode = {
       id: address,
       address: address,
-      label: truncateAddress(address),
+      label: data.isCex ? data.cexName : truncateAddress(address),
       isRoot: false,
+      isCex: data.isCex,
+      cexName: data.cexName,
+      cexLabel: data.cexLabel,
+      accountType: data.accountType,
       stats: {
         totalSent: data.totalSent,
         totalReceived: data.totalReceived,
@@ -208,6 +274,7 @@ function buildTreeData(rootWalletAddress, counterpartyMap) {
       totalReceived,
       netFlow: totalReceived - totalSent,
       tokensInvolved: Array.from(allTokens),
+      cexCount,
     },
   };
 }
@@ -314,3 +381,27 @@ export function filterByMinTransactions(treeData, minCount) {
   };
 }
 
+/**
+ * Gets only CEX wallets from the tree data
+ * @param {Object} treeData - Processed tree data
+ * @returns {Array} - CEX wallet nodes
+ */
+export function getCexWallets(treeData) {
+  return treeData.nodes.filter(node => node.isCex);
+}
+
+/**
+ * Filters wallets based on account info validity
+ * @param {Array} addresses - Array of addresses
+ * @param {Map} accountsInfo - Map of address -> account info
+ * @returns {Array} - Valid addresses only
+ */
+export function filterValidWallets(addresses, accountsInfo) {
+  return addresses.filter(addr => {
+    const info = accountsInfo.get(addr);
+    return !info || info.isValid;
+  });
+}
+
+// Export constants for UI display
+export { MIN_VALUE_USD, SOL_PRICE_USD, MIN_SOL_VALUE };
