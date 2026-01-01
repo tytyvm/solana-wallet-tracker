@@ -193,6 +193,36 @@ function parseTransaction(tx, walletAddress) {
     return null;
   }
 
+  // FILTER: Skip transactions that are part of swap/DEX operations
+  // These show up as TRANSFER but are actually swap-related
+  const SKIP_SOURCES = [
+    'JUPITER',
+    'RAYDIUM',
+    'ORCA',
+    'METEORA',
+    'PUMP_FUN',
+    'AXIOM',
+    'PHOTON',
+    'BANANA_GUN',
+    'BONKBOT',
+    'MAESTRO',
+    'SOL_TRADING_BOT'
+  ];
+
+  if (tx.source && SKIP_SOURCES.includes(tx.source.toUpperCase())) {
+    return null;
+  }
+
+  // FILTER: Skip ATA create/close operations
+  if (tx.description) {
+    const desc = tx.description.toLowerCase();
+    if (desc.includes('create account') ||
+        desc.includes('close account') ||
+        desc.includes('token account')) {
+      return null;
+    }
+  }
+
   // Extract basic transaction info
   const parsed = {
     signature: tx.signature,

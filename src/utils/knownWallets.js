@@ -75,6 +75,10 @@ export const PROGRAM_BLOCKLIST = [
   { address: 'cndy3Z4yapfJBmL3ShUp5exZKqR3z33thTzeNMm2gRZ', name: 'Candy Machine v1' },
   { address: 'Guard1JwRhJkVH6XZhzoYxeBVQe872VH6QggF4BWmS9g', name: 'Candy Guard' },
   { address: 'DeJBGdMFa1uynnnKiwrVioatTuHmNLpyFKnmB5kaFdzQ', name: 'Phantom' },
+
+  // Trading Bot & Aggregator Fee Wallets
+  { address: 'AxiomRXZAq1Jgjj9pHmNqVP7Lhu67wLXZJZbaK87TTSk', name: 'Axiom Fee' },
+  { address: 'AqhMydRvBH3nPdpsQVEJKoTTZCT2UMbBoMRZcVFL8vBy', name: 'ATA/Swap Account' },
 ];
 
 // Create a Set for O(1) lookup
