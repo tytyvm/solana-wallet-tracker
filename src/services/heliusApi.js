@@ -193,32 +193,25 @@ function parseTransaction(tx, walletAddress) {
     return null;
   }
 
-  // FILTER: Skip transactions that are part of swap/DEX operations
-  // These show up as TRANSFER but are actually swap-related
-  const SKIP_SOURCES = [
-    'JUPITER',
-    'RAYDIUM',
-    'ORCA',
-    'METEORA',
-    'PUMP_FUN',
-    'AXIOM',
-    'PHOTON',
-    'BANANA_GUN',
-    'BONKBOT',
-    'MAESTRO',
-    'SOL_TRADING_BOT'
-  ];
-
-  if (tx.source && SKIP_SOURCES.includes(tx.source.toUpperCase())) {
-    return null;
+  // FILTER: Skip if transaction source is a DEX/aggregator/bot
+  // This means the "transfer" is actually part of a swap, not a direct send
+  if (tx.source) {
+    const source = tx.source.toUpperCase();
+    // If source is anything other than SYSTEM_PROGRAM or empty, it's likely DEX-routed
+    if (source !== 'SYSTEM_PROGRAM' && source !== 'SYSTEM' && source !== '') {
+      return null;
+    }
   }
 
-  // FILTER: Skip ATA create/close operations
+  // FILTER: Skip ATA operations based on description
   if (tx.description) {
     const desc = tx.description.toLowerCase();
-    if (desc.includes('create account') ||
-        desc.includes('close account') ||
-        desc.includes('token account')) {
+    if (desc.includes('create') ||
+        desc.includes('close') ||
+        desc.includes('account') ||
+        desc.includes('swap') ||
+        desc.includes('buy') ||
+        desc.includes('sell')) {
       return null;
     }
   }
